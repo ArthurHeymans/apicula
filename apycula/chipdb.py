@@ -9,6 +9,7 @@ from collections import namedtuple
 from apycula.dat_parser import Datfile
 import apycula.fse_parser as fuse
 from apycula import wirenames as wnames
+from apycula import attrids
 from apycula import pindef
 from apycula import bitmatrix
 
@@ -649,28 +650,35 @@ def fse_luts(fse, ttyp, device):
                 'I3': f"D{alu_idx}",
             }
 
-    # main fuse: enable shadow SRAM in the slice
-    # shortval(28) [2, 0, fuses]
-    #XXX no SRAM for GW5A-25A for now
-    if device not in {'GW5A-25A'} and 28 in fse[ttyp]['shortval']:
-        for i in range(6):
-            bel = luts.setdefault(f"DFF{i}", Bel())
-            mode = bel.modes.setdefault("RAM", set())
-            for key0, key1, *fuses in fse[ttyp]['shortval'][25+i//2]:
-                if key0 < 0:
-                    for f in fuses:
-                        if f == -1: break
-                        coord = fuse.fuse_lookup(fse, ttyp, f, device)
-                        mode.add(coord)
+    # main fuses: MODE=SSRAM in the CLS3 table (shortval 28) enables shadow
+    # SRAM in the slice. GW5A-25A uses a different SLICE logic code.
+    ssram_code = 2
+    if device == 'GW5A-25A':
+        slice_codes = fse['header']['logicinfo'].get(12, [])
+        ssram_code = next((code for code, (attr, val, _) in enumerate(slice_codes)
+                           if (attr, val) == (attrids.cls_attrids['MODE'], attrids.cls_attrvals['SSRAM'])), None)
+    ssram_fuses = [fuses for key0, key1, *fuses in fse[ttyp]['shortval'].get(28, [])
+                   if ssram_code is not None and (key0, key1) == (ssram_code, 0)]
+    if ssram_fuses:
+        # XXX on GW5A the negative keys of CLS0-2 are unrelated to SSRAM
+        if device not in {'GW5A-25A'}:
+            for i in range(6):
+                bel = luts.setdefault(f"DFF{i}", Bel())
+                mode = bel.modes.setdefault("RAM", set())
+                for key0, key1, *fuses in fse[ttyp]['shortval'][25+i//2]:
+                    if key0 < 0:
+                        for f in fuses:
+                            if f == -1: break
+                            coord = fuse.fuse_lookup(fse, ttyp, f, device)
+                            mode.add(coord)
 
         bel = luts.setdefault(f"RAM16", Bel())
         mode = bel.modes.setdefault("0", set())
-        for key0, key1, *fuses in fse[ttyp]['shortval'][28]:
-            if key0 == 2 and key1 == 0:
-                for f in fuses:
-                    if f == -1: break
-                    coord = fuse.fuse_lookup(fse, ttyp, f, device)
-                    mode.add(coord)
+        for entry in ssram_fuses:
+            for f in entry:
+                if f == -1: break
+                coord = fuse.fuse_lookup(fse, ttyp, f, device)
+                mode.add(coord)
         bel.portmap = {
             'DI': ("A5", "B5", "C5", "D5"),
             'CLK': "CLK2",
@@ -4151,11 +4159,8 @@ def from_fse(device, fse, dat: Datfile):
     fse_create_pll_clock_aliases(dev, device)
     fse_create_bottom_io(dev, device)
     fse_create_tile_types(dev, device, dat)
-    # No SSRAM in GW5A-25A
     if device in {'GW5A-25A'}:
-        dev.tile_types.setdefault('C', set()).update(dev.tile_types['M'])
         dev.tile_types['P'] = set()
-        dev.tile_types['M'] = set()
         dev.tile_types['D5A'] = dev.tile_types['D']
         dev.tile_types['D'] = set()
     if device in {'GW5AT-60B'}:
