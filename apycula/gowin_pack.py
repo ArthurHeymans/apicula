@@ -6263,6 +6263,90 @@ class GW5A_25A(GW5A):
             attr_vals.append(AttrVal('INMODE', cell_inmode))
         return attr_vals
 
+    def used_iologic_bels(self) -> set[str]:
+        if not hasattr(self, '_used_iologic_bels'):
+            cells = self.pnr.in_file['modules'][self.pnr.top_module_name]['cells'].values()
+            self._used_iologic_bels = {c['attributes'].get('NEXTPNR_BEL') for c in cells
+                                       if c['type'].startswith('IOLOGIC')}
+        return self._used_iologic_bels
+
+    def io_register_attrs(self, bel: IologicBelDesc, reg: str) -> list[AttrVal]:
+        """ Attributes for a flip-flop placed in the IREG or OREG of an IO logic.
+
+        Without them the register is not clocked. Derived from Gowin IDE
+        bitstreams for each flip-flop type.
+        """
+        cell = bel.cell
+        reg_type = cell.attrs.get(f'{reg}_TYPE', '').strip()
+        if not reg_type:
+            return []
+        side, other = ('I', 'O') if reg == 'IREG' else ('O', 'I')
+
+        attr_vals = [AttrVal(f'CLK{side}MUX', 'ENABLE')]
+        if reg_type.startswith('DFFN'):
+            reg_type = 'DFF' + reg_type[4:]
+            attr_vals += [AttrVal(f'CLK{side}MUX_1', '0'), AttrVal(f'CLK{side}MUX_CLK', 'INV')]
+            if reg == 'IREG':
+                attr_vals.append(AttrVal('IREG_INREGMODE', 'LATCH'))
+            else:
+                attr_vals += [AttrVal('OREG_OUTREGMODE', 'LATCH'), AttrVal('TREG_OUTREGMODE', 'LATCH')]
+        if reg == 'OREG':
+            attr_vals.append(AttrVal('OUTMODE', 'OREG'))
+
+        ce = cell.connections.get('CE')
+        if not ce or self.pnr.is_vcc_net(ce[0]):
+            attr_vals.append(AttrVal(f'CE{side}MUX_1', '1'))
+
+        lsr = [cell.connections[port] for port in ('RESET', 'SET', 'CLEAR', 'PRESET') if cell.connections.get(port)]
+        if not lsr or self.pnr.is_gnd_net(lsr[0][0]):
+            attr_vals.append(AttrVal(f'LSR{side}MUX_0', '0'))
+        # The input and output registers of an IO logic are separate bels.
+        other_bel = cell.attrs['NEXTPNR_BEL'][:-1] + other
+        if other_bel not in self.used_iologic_bels():
+            attr_vals.append(AttrVal(f'LSR{other}MUX_0', '0'))
+
+        # Synchronous set/reset, also used when there is none
+        if reg_type in {'DFF', 'DFFE', 'DFFR', 'DFFRE', 'DFFS', 'DFFSE'}:
+            attr_vals.append(AttrVal('SRMODE', 'LSR_OVER_CE'))
+        if reg_type in {'DFFS', 'DFFSE', 'DFFP', 'DFFPE'}:
+            attr_vals.append(AttrVal(f'{reg}_REGSET', 'SET'))
+        return attr_vals
+
+    def get_IOLOGICI_EMPTY_fuses(self, bel: BelDesc) -> list[CellFuseBits]:
+        iol_bel = self.make_IologicBelDesc(bel)
+        attr_vals = self.common_iologic_handler(iol_bel)
+        attr_vals += self.io_register_attrs(iol_bel, 'IREG')
+        return self.io_register_fuses(iol_bel, attr_vals)
+
+    def get_IOLOGICO_EMPTY_fuses(self, bel: BelDesc) -> list[CellFuseBits]:
+        iol_bel = self.make_IologicBelDesc(bel)
+        if iol_bel.cell.attrs.get('TREG_TYPE'):
+            raise Exception(f"{iol_bel.cell.name}: tristate registers in IO logic are not supported")
+        attr_vals = self.common_iologic_handler(iol_bel)
+        attr_vals += self.io_register_attrs(iol_bel, 'OREG')
+        return self.io_register_fuses(iol_bel, attr_vals)
+
+    def io_register_fuses(self, bel: IologicBelDesc, attr_vals: list[AttrVal]) -> list[CellFuseBits]:
+        """ An IO pair spans two tiles: like the IOB fuses, the IOLOGIC
+        settings for the B pin are in the fuse cell of the IOB, the ones in
+        the IOB tile are a stub.
+        """
+        x, y = bel.x, bel.y
+        if bel.idx_str == 'B':
+            fuse_cell_offset = self.chipdb.get_iob_fuse_cell_offset(x, y, 'B')
+            if fuse_cell_offset:
+                x += fuse_cell_offset[1]
+                y += fuse_cell_offset[0]
+            if not self.chipdb.db.shortval[self.chipdb.get_ttyp(x, y)].get('IOLOGICB'):
+                raise Exception(f"{bel.cell.name}: no IO logic settings for the B pin at ({x}, {y})")
+
+        av = self.set_iologic_attrvals(bel, attr_vals)
+        fuses = []
+        bits = self.chipdb.get_iologic_fuses(x, y, av, bel.idx_str)
+        if bits:
+            fuses.append(CellFuseBits(x, y, bits))
+        return fuses
+
     def common_iologic_handler(self, bel: IologicBelDesc) -> list[AttrVal]:
         attr_vals = []
         cell_parms = bel.cell.parms

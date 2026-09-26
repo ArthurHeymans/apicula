@@ -23,7 +23,7 @@ primer25k: \
 	oddr-tlvds-primer25k.fs oser4-primer25k.fs oser8-primer25k.fs oser10-primer25k.fs ovideo-primer25k.fs \
 	iddr-primer25k.fs iddrc-primer25k.fs ides4-primer25k.fs ivideo-primer25k.fs \
 	ides8-primer25k.fs ides10-primer25k.fs \
-	oser10-clkdiv-tlvds-primer25k.fs
+	oser10-clkdiv-tlvds-primer25k.fs ioregs-primer25k.fs
 
 tangmega138k: \
 	big-shift-tangmega138k.fs attosoc-tangmega138k.fs uart-message-tangmega138k.fs
@@ -49,6 +49,9 @@ clean:
 
 big-shift-primer25k.json: big-shift-primer25k-synth.json big-shift-primer25k.cst
 	$(NEXTPNR) ${NEXTPNR_FLAGS} ${DEBUG} --top top --json $< --write $@ --device GW5A-LV25MG121NES --vopt cst=big-shift-primer25k.cst --vopt sspi_as_gpio
+
+ioregs-primer25k.json: ioregs-primer25k-synth.json primer25k.cst
+	$(NEXTPNR) ${NEXTPNR_FLAGS} ${DEBUG} --top top --json $< --write $@ --device GW5A-LV25MG121NES --vopt cst=primer25k.cst --vopt sspi_as_gpio --vopt ireg_in_iob --vopt oreg_in_iob
 
 alu-%-primer25k.json: alu-%-primer25k-synth.json alu-%-primer25k.cst
 	$(NEXTPNR) ${NEXTPNR_FLAGS} ${DEBUG} --top top --json $< --write $@ --device GW5A-LV25MG121NES --vopt cst=$(basename $@).cst --vopt sspi_as_gpio

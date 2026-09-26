@@ -4081,6 +4081,7 @@ def set_chip_flags(dev, device):
         dev.chip_flags.append("NEED_SDP_FIX")
         dev.chip_flags.append("HAS_5A_DSP")
         dev.chip_flags.append("HAS_5A_HCLK")
+        dev.chip_flags.append("HAS_5A_IOREG")
     if device in {'GW5AT-60B'}:
         dev.chip_flags.append("HAS_EMPTY_QUADRANT")
     if device in {'GW5AST-138C'}:
@@ -4768,6 +4769,20 @@ def dat_portmap(dat, dev, device):
                                         add_node(dev, node_name, "IO_I", row, col, wire)
                                         add_node(dev, node_name, "IO_I", row + r_off, col + c_off, node_wire)
                                     bel.portmap[nam] = wire
+                            # The CE entry of _iologic_inputs shares index 42
+                            # with VALUE. On the GW5A-25A the IO registers take
+                            # their clock enable from CE0 of the cell holding
+                            # their settings, like CLK0 and LSR0. No IO logic
+                            # primitive has a CE input, so only the IO
+                            # registers use this port.
+                            if device in {'GW5A-25A'}:
+                                if buf == 'B':
+                                    node_name = f'X{row + r_off}Y{col + c_off}/CE0'
+                                    add_node(dev, node_name, "IO_I", row, col, 'IOLOGICCE0')
+                                    add_node(dev, node_name, "IO_I", row + r_off, col + c_off, 'CE0')
+                                    bel.portmap['CE'] = 'IOLOGICCE0'
+                                else:
+                                    bel.portmap['CE'] = 'CE0'
                             # D8-D15 are placed in paired cell
                             pair = {'A': 'B', 'B': 'A'}[buf]
                             for idx, nam in _iologic_inputs:
