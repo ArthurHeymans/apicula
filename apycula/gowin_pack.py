@@ -1332,7 +1332,8 @@ class Device:
 
         fuses = []
         for i in range(4):
-            init = str(bel.cell.parms[f'INIT_{i}'])
+            # INIT defaults to all zeros, like the primitive
+            init = str(bel.cell.parms.get(f'INIT_{i}', '0' * 16))
             if len(init) > 16:
                 init = init[-16:]
             else:
