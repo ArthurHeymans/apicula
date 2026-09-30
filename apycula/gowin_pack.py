@@ -1332,7 +1332,8 @@ class Device:
 
         fuses = []
         for i in range(4):
-            init = str(bel.cell.parms[f'INIT_{i}'])
+            # INIT defaults to all zeros, like the primitive
+            init = str(bel.cell.parms.get(f'INIT_{i}', '0' * 16))
             if len(init) > 16:
                 init = init[-16:]
             else:
@@ -5734,6 +5735,24 @@ class GW5A_25A(GW5A):
         # pins and are repeating this process.
         self.hclk_io_pairs = {(11, 36): (30, 36), (25, 36): (32, 36), (53, 36): (28, 36), (74, 36): (90, 36), }
         self.used_clock_spines = set()
+        # IO buffer defaults as the Gowin IDE writes them for LVCMOS33, found
+        # by comparing IDE and gowin_pack bitstreams pin by pin: no pull
+        # unless one is asked for, input hysteresis on, no slew rate fuse.
+        # OPENDRAIN is an output setting and has no place in an input buffer.
+        def with_defaults(attrs, overrides, drop=()):
+            attrs = [(a, overrides.get(a, v)) for a, v in attrs if a not in drop]
+            existing = {a for a, _ in attrs}
+            return attrs + [(a, v) for a, v in overrides.items() if a not in existing]
+        self.lvcmos33_defaults = [
+            (self.default_ibuf_attrs, with_defaults(self.default_ibuf_attrs,
+                {'HYSTERESIS': 'ON', 'PULLMODE': 'NONE'}, drop=('OPENDRAIN',))),
+            (self.default_obuf_attrs, with_defaults(self.default_obuf_attrs,
+                {'PULLMODE': 'NONE', 'SLEWRATE': 'SLOW'})),
+            (self.default_tbuf_attrs, with_defaults(self.default_tbuf_attrs,
+                {'PULLMODE': 'NONE', 'SLEWRATE': 'SLOW'})),
+            (self.default_iobuf_attrs, with_defaults(self.default_iobuf_attrs,
+                {'PULLMODE': 'NONE', 'SLEWRATE': 'SLOW', 'IOB_UNKNOWN67': 'UNKNOWN263'})),
+        ]
         # default attrs for DSP
         self.multaddalu12x12_defaults = [
                 ('A0REG_CLK', 'BYPASS'), ('A0REG_CE', 'CE0'), ('A0REG_RESET', 'RESET0'),
@@ -6060,6 +6079,12 @@ class GW5A_25A(GW5A):
     #==============================
     #========== IO
     #==============================
+    def set_io_attrvals(self, bel: IoBelDesc, default_attrs: list[tuple[str, str]], defaults_only=False, force_attrs=None) -> set[int]:
+        if bel.cell.attrs.get('IO_TYPE', 'LVCMOS33') == 'LVCMOS33':
+            default_attrs = next((replacement for original, replacement in self.lvcmos33_defaults
+                                  if default_attrs is original), default_attrs)
+        return super().set_io_attrvals(bel, default_attrs, defaults_only, force_attrs or {})
+
     def do_not_touch_io(self, x: int, y: int, idx_str: str) -> bool:
         """ Do not set fuses for this IO """
         for adc_io in self.adc_ios:
@@ -6073,7 +6098,8 @@ class GW5A_25A(GW5A):
         self.chipdb.get_iob_attr_val(AttrVal("IO_TYPE", bank_desc.io_type), av)
         self.chipdb.get_iob_attr_val(AttrVal("BANK_VCCIO", bank_desc.bank_vccio), av)
 
-        if 'HCLK' in bel.flags:
+        # The IDE sets this for every input, not only for HCLK sources
+        if 'HCLK' in bel.flags or (bank_desc.io_type == 'LVCMOS33' and 'HCLK_PAIR' not in bel.flags):
             self.chipdb.get_iob_attr_val(AttrVal("IOB_UNKNOWN67", "UNKNOWN263"), av)
         if 'HCLK_PAIR' in bel.flags:
             self.chipdb.get_iob_attr_val(AttrVal("IOB_UNKNOWN67", "UNKNOWN266"), av)

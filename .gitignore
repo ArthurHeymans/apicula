@@ -14,6 +14,7 @@ impl
 env
 *.pickle
 *.msgpack.xz
+!apycula/GW5A-25A.msgpack.xz
 __pycache__
 generic/blinky.fasm
 generic/blinky.png
